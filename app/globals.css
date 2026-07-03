@@ -1,0 +1,93 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #1a1d23;
+  color: #e8e8e8;
+  line-height: 1.6;
+}
+
+main {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem;
+}
+
+h1 {
+  font-size: 1.8rem;
+}
+
+a {
+  color: #8ab4f8;
+}
+
+code {
+  background: #2a2f3a;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: #8ab4f8;
+  word-break: break-all;
+}
+
+button.primary {
+  font-size: 1.05rem;
+  padding: 0.7rem 1.6rem;
+  border-radius: 8px;
+  border: none;
+  background: #2e7d32;
+  color: white;
+  cursor: pointer;
+}
+
+button.primary:hover {
+  background: #388e3c;
+}
+
+/* Step-by-step trace boxes used on the home and callback pages */
+.step {
+  background: #23272f;
+  border: 1px solid #3a3f4a;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin: 1rem 0;
+}
+
+.step h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.step .label {
+  display: inline-block;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  color: #f0a500;
+  margin-bottom: 0.25rem;
+}
+
+.step pre {
+  background: #1a1d23;
+  border-radius: 6px;
+  padding: 0.75rem;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  margin: 0.5rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.error {
+  border-color: #b3403e;
+}
+
+.error .label {
+  color: #ff7b72;
+}
+
+.success {
+  border-color: #2e7d32;
+}

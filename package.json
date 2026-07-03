@@ -1,0 +1,21 @@
+{
+  "name": "nextjs-oauth2-pkce",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OAuth 2.0 Authorization Code flow with PKCE, implemented from scratch in Next.js. No auth libraries, just fetch and Web Crypto.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "^15.3.4",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "typescript": "^5.8.0"
+  }
+}
