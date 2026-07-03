@@ -1,19 +1,28 @@
-# OAuth 2.0 + PKCE, from scratch
+# Backend-vouched authorization code + PKCE, from scratch
 
-An educational Next.js app that implements the **OAuth 2.0 Authorization Code
-flow with PKCE** ([RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749) +
-[RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636)) with **no auth
-libraries**: just `fetch`, the Web Crypto API, and Next.js route handlers.
+An educational Next.js app that implements an **OAuth 2.0-style
+authorization-code grant hardened with PKCE**
+([RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749) +
+[RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636)) — with a twist on
+the textbook flow: **there is no browser redirect, no login form, no consent
+screen**. The user is already signed in to a *partner's* app; the partner's
+backend **vouches** for them, and a **Token Exchange Service (TES)** mints
+the one-time code and the member tokens.
 
-It includes **both sides of the protocol**:
+Everything is built with **no auth libraries**: just `fetch`, the Web Crypto
+API, and Next.js route handlers. All three actors live in this repo, so the
+whole flow runs locally with zero registration or configuration:
 
-- the **client** (the part you write at work): starts the login, handles the
-  callback, exchanges the code for a token;
-- a **mock authorization server** (the part Google/Auth0/Okta run for you),
-  so the whole flow runs locally with zero registration or configuration.
+- the **app / SDK** — the public client; generates the PKCE secret and is
+  its only holder;
+- the **partner backend** — holds the confidential *server-key* and vouches
+  for members it has already authenticated by its own means;
+- the **Token Exchange Service** — validates the vouch, resolves the
+  member's identity, mints short-lived signed tokens, and owns refresh
+  rotation and revocation.
 
-Every intermediate value (verifier, challenge, code, token) is printed on
-screen as the flow runs.
+Every intermediate value (verifier, challenge, code, token claims) is
+printed on screen as the flow runs — including the failure paths.
 
 ## Run it
 
@@ -22,109 +31,182 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000 and click **Sign in with Mock Provider**.
+Open http://localhost:3000. One button runs the full session arc (vouch →
+code → PKCE exchange → API call → refresh rotation → revoke); the other
+signs in a member that was never provisioned, to show that path.
 
-## Why PKCE exists (60-second version)
+## The model in 60 seconds
 
-In the plain Authorization Code flow, the provider hands your app a temporary
-`code` through a **browser redirect**. Redirects leak: browser history,
-proxies and logs, and on mobile a malicious app can register itself as the
-handler for your redirect URL. Your `client_id` is public, so **anyone who
-steals the code can exchange it for the user's access token**.
+A partner (an external company integrating the platform's SDK) gets two
+credentials:
 
-Confidential (server-side) clients mitigate this with a `client_secret` — but
-a browser or mobile app cannot keep a secret: anything shipped to the device
-can be extracted.
+| Credential | Type | Lives in | Drives |
+|---|---|---|---|
+| **server-key** | Confidential, machine-to-machine | Partner **backend** | Provisioning members + **vouching** for their sign-in |
+| **client-key** | Public (no secret) | Partner **app** (SDK) | Identifies the app; initiates the token exchange |
 
-PKCE ("pixy", Proof Key for Code Exchange) replaces the static secret with a
-**fresh secret per login** that never travels through a redirect:
+The member never types a password into the platform: they are already
+signed in to the partner's app. Sign-in to the platform is therefore not
+"authenticate this user" but "**a trusted partner asserts this is their
+member X**" — one server-key-authenticated API call. The TES answers with a
+one-time code, and the app swaps it for tokens. The client-key is public by
+design and is never the security boundary; the vouch (anchored on the
+server-key) is.
+
+## Why PKCE, if there's no redirect?
+
+In the classic flow PKCE protects the code while it rides browser
+redirects. Here there are no redirects — but the code still travels through
+hands that must not be able to redeem it: **the partner's backend**, its
+logs, and the backend→app response hop.
 
 | | Value | Where it goes |
 |---|---|---|
-| 1 | `code_verifier` — 43 random chars | stays on the device |
-| 2 | `code_challenge = SHA-256(verifier)` | sent with the *authorization* request (redirect) |
-| 3 | `code_verifier` (the original) | sent with the *token* request (direct `fetch`) |
+| 1 | `code_verifier` — 43 random chars | stays in the app, in memory |
+| 2 | `code_challenge = SHA-256(verifier)` | app → partner backend → TES `/tes/authorize` |
+| 3 | `code_verifier` (the original) | app → TES `/tes/token`, direct call |
 
-The provider hashes the verifier from step 3 and compares it with the
-challenge from step 2. A thief who intercepted the redirect has the code and
-the challenge, but a hash can't be reversed, so they can never produce the
-verifier — the stolen code is worthless.
-
-This is why **OAuth 2.1 makes PKCE mandatory** for the authorization code
-flow, for every client type.
+The TES hashes the verifier from step 3 and compares it with the challenge
+from step 2. The partner backend only ever saw the hash, and a hash cannot
+be reversed — so even the backend that *delivered* the code cannot redeem
+it. The code is bound to the one app instance that started the sign-in.
 
 ## The flow, end to end
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant B as Browser (this app)
-    participant P as Authorization server (app/oauth/*)
+    actor Member
+    participant App as Partner app / SDK
+    participant Backend as Partner backend
+    participant TES as Token Exchange Service
+    participant API as Member endpoints
 
-    Note over B: create random code_verifier + state,<br/>keep them in sessionStorage
-    Note over B: code_challenge = SHA-256(code_verifier)
-    B->>P: GET /oauth/authorize?response_type=code&client_id&redirect_uri<br/>&state&code_challenge&code_challenge_method=S256
-    Note over P: user logs in and approves.<br/>Store challenge next to a new one-time code
-    P->>B: 302 → /callback?code=...&state=...
-    Note over B: check returned state == stored state (CSRF)
-    B->>P: POST /oauth/token (fetch, form-encoded)<br/>grant_type=authorization_code&code&code_verifier...
-    Note over P: SHA-256(code_verifier) == stored challenge?<br/>code unused and unexpired? client + redirect_uri match?
-    P->>B: 200 { access_token, token_type: "Bearer", expires_in }
-    B->>P: GET /oauth/userinfo — Authorization: Bearer <token>
-    P->>B: 200 { sub, name, email }
+    Member->>App: opens the app (already signed in to the partner)
+    App->>App: generate code_verifier +<br/>code_challenge = S256(verifier)
+    App->>Backend: "start a session for member X" + code_challenge
+    Backend->>TES: POST /tes/authorize { platform_member_id, code_challenge }<br/>(auth: server-key)
+    Note over TES: partner owns member X?<br/>member provisioned?<br/>seal challenge into a one-time code
+    TES-->>Backend: one-time code (response body, never a URL)
+    Backend-->>App: code
+    App->>TES: POST /tes/token { grant_type: authorization_code,<br/>code, code_verifier, client_id }
+    Note over TES: S256(code_verifier) == challenge?<br/>burn the code · mint access + refresh pair
+    TES-->>App: member token (+ refresh token)
+    App->>API: authenticated requests (Bearer)
+    App->>TES: POST /tes/token/refresh (rotate pair)
+    App->>TES: POST /tes/revoke (logout — session dies server-side)
 ```
+
+## How this differs from the classic redirect flow
+
+If you've seen the textbook "Sign in with Google"-style flow, map the
+differences:
+
+| Classic front-channel flow | This flow (backend-vouched) |
+|---|---|
+| Provider authenticates the user itself (login + consent page) | Partner already authenticated the member; the **server-key vouch** replaces the login |
+| Code issued via `302 → redirect_uri?code=...` — rides a URL | Code returned **in an API response body** — never in a URL |
+| `redirect_uri` registration + exact-match validation | No redirect_uri exists |
+| `state` parameter defends the callback against CSRF | No callback exists, so no `state` |
+| Verifier persisted in `sessionStorage` across the redirect | Verifier stays **in a local variable** — the page never unloads |
+| PKCE defends against codes stolen from redirects | PKCE defends against the code's other custodians (**the partner backend**, its logs) |
+| Trust anchor: user's login at the provider | Trust anchor: the **server-key**, bound to one organization |
+
+Same grant, same one-time code discipline, same PKCE math — different
+channel for issuing the code, and a different party asserting identity.
 
 ## Where to read the code
 
-Follow the numbered steps; each file's header comment explains its role.
+Follow the numbered steps; each file's header comment explains its role and
+which ACTOR it belongs to.
 
-| Step | What happens | File |
-|---|---|---|
-| — | PKCE explained + verifier/challenge/state generation | [`lib/pkce.ts`](lib/pkce.ts) |
-| 1–2 | Start login: generate secrets, redirect to provider | [`app/sign-in-button.tsx`](app/sign-in-button.tsx) |
-| 3–4 | *(provider)* validate request, consent screen, mint code | [`app/oauth/authorize/route.ts`](app/oauth/authorize/route.ts) |
-| 5–7 | Callback: state check, exchange code+verifier for token | [`app/callback/page.tsx`](app/callback/page.tsx) |
-| 6–7 | *(provider)* **the PKCE check**, issue access token | [`app/oauth/token/route.ts`](app/oauth/token/route.ts) |
-| 8 | Call a protected API with the Bearer token | [`app/oauth/userinfo/route.ts`](app/oauth/userinfo/route.ts) |
-| — | Client config (note: no client_secret anywhere) | [`lib/oauth-config.ts`](lib/oauth-config.ts) |
-| — | How the mock provider signs codes/tokens (HMAC) | [`lib/provider.ts`](lib/provider.ts) |
+| Step | Actor | What happens | File |
+|---|---|---|---|
+| — | app | PKCE explained + verifier/challenge generation | [`lib/pkce.client.ts`](lib/pkce.client.ts) |
+| 1–8 | app | The SDK: drives the whole arc, only holder of the verifier | [`app/sdk-demo.client.tsx`](app/sdk-demo.client.tsx) |
+| 2 | partner | Vouch relay: holds the **server-key**, never sees the verifier | [`app/partner/session/route.ts`](app/partner/session/route.ts) |
+| 3–4 | TES | Validate the vouch, tenant isolation, mint the one-time code | [`app/tes/authorize/route.ts`](app/tes/authorize/route.ts) |
+| 5 | TES | **The PKCE check**, burn the code, mint the token pair | [`app/tes/token/route.ts`](app/tes/token/route.ts) |
+| 6 | API | A protected member endpoint verifying the token locally | [`app/pager/member-profile/route.ts`](app/pager/member-profile/route.ts) |
+| 7 | TES | Refresh with rotation + identity re-resolution | [`app/tes/token/refresh/route.ts`](app/tes/token/refresh/route.ts) |
+| 8 | TES | Revocation: logout that actually works | [`app/tes/revoke/route.ts`](app/tes/revoke/route.ts) |
+| — | TES | Registries, token shapes, signing (HMAC), tenant model | [`lib/tes.server.ts`](lib/tes.server.ts) |
+| — | app | Public client config (note: nothing confidential) | [`lib/sdk-config.client.ts`](lib/sdk-config.client.ts) |
+
+## Naming convention: where does this code run?
+
+File names tell you which side of the wire each module executes on:
+
+- **`*.client.ts(x)`** — runs in the **browser**: the app/SDK code, the only
+  holder of the PKCE verifier.
+- **`*.server.ts`** — runs only on the **backend**. `lib/tes.server.ts`
+  holds the signing secret and the partner server-keys; it also throws at
+  import time if it ever ends up in a browser bundle, so a wrong import
+  fails loudly.
+- **`*.shared.ts`** — pure helpers safe on both sides
+  (`lib/base64url.shared.ts` uses only web-standard APIs).
+
+Next.js reserves some file names that can't carry a suffix. For those:
+
+- `app/**/route.ts` — **always backend**. Here the top-level directory names
+  the ACTOR each endpoint belongs to: `app/partner/*` is the partner's
+  backend, `app/tes/*` is the Token Exchange Service, and `app/pager/*` is
+  the platform's existing member APIs (three separate deployments in real
+  life, one repo here so the demo is self-contained).
+- `app/**/page.tsx` / `layout.tsx` — backend by default; a file that starts
+  with the `"use client"` directive ships to the **browser**.
 
 ## Things worth noticing
 
-- **`state` and PKCE solve different attacks.** `state` stops CSRF on the
-  callback (an attacker completing *their* login in *your* browser). PKCE
-  stops stolen authorization codes. You need both.
-- **The verifier never appears in a URL.** It travels exactly once, in the
-  body of a direct HTTPS POST. Everything that goes through a redirect
-  (challenge, code, state) is treated as public.
-- **Authorization codes are single-use and short-lived.** Try refreshing the
-  callback page: the replayed exchange is rejected by the token endpoint.
-- **No `client_secret` exists in this repo.** That's the point: a public
-  client with PKCE doesn't need one.
-- **Token storage is a real-world concern this demo dodges.** The access
-  token here lives in a JS variable and dies with the page. Real apps avoid
-  `localStorage` (readable by any XSS payload) and prefer in-memory tokens,
-  httpOnly-cookie sessions, or keeping tokens server-side.
-- **The mock provider's shortcuts are labeled.** Real servers persist codes
-  in a database (ours are stateless HMAC-signed blobs), verify redirect URIs
-  against a registration dashboard, and actually authenticate the user.
+- **There is no `state` parameter — and that's correct here.** `state`
+  defends a redirect callback against CSRF. This flow has no redirect and no
+  callback; adding `state` would be cargo-culting. Security controls map to
+  channels, not to checklists.
+- **The verifier never leaves the app.** It lives in a local variable (not
+  even sessionStorage — nothing persists), travels exactly once in the body
+  of the direct `/tes/token` call, and is never logged.
+- **Tenant isolation is structural.** The server-key is bound to one
+  organization and the member lookup is scoped inside it, so a partner
+  cannot vouch for — or even probe the existence of — another tenant's
+  members. There is no code path for cross-tenant access.
+- **Provision-before-sign-in.** Sign-in never creates members; the partner
+  backend provisions them ahead of time. An unprovisioned member gets a
+  clean, distinct `409 member_not_provisioned` the partner can branch on:
+  provision, then retry.
+- **Refresh rotation turns theft into a signal.** Each refresh retires the
+  old pair; a replayed refresh token fails loudly, which is exactly what
+  you want to alert on.
+- **Owning the issuer makes logout real.** `/tes/revoke` kills the session
+  server-side; the demo proves it by re-calling the member API with the
+  just-revoked token. A stateless external issuer cannot do this.
+- **The demo's shortcuts are labeled.** Real systems: asymmetric signing
+  (RS256/ES256) with published JWKS instead of a shared HMAC secret,
+  databases instead of in-memory Sets and in-code registries, a real M2M
+  client instead of a static server-key, and a partner backend that derives
+  the member id from its own authenticated session instead of trusting the
+  request body (see the loud comment in `app/partner/session/route.ts`).
 
 ## Exercises
 
-1. Tamper with the exchange: in `app/callback/page.tsx`, send a wrong
-   `code_verifier` and watch the token endpoint refuse.
-2. Replay attack: copy the `code` from the callback URL and try to POST it to
-   `/oauth/token` yourself with `curl`. Two independent checks stop you —
-   which ones?
-3. Remove the `state` check and describe (or build!) the attack that becomes
-   possible.
-4. Point `lib/oauth-config.ts` at a real provider that supports PKCE for
-   public clients (Google, Auth0, Okta, Microsoft Entra). The client code
-   barely changes — that's the value of implementing to the spec.
+1. Tamper with the exchange: in `app/sdk-demo.client.tsx`, send a wrong
+   `code_verifier` and watch `/tes/token` refuse.
+2. Replay attack: grab the `code` from the trace and POST it to `/tes/token`
+   yourself with `curl`. Which checks stop you, and in what order?
+3. Steal the server-key of `globex` (it's in `lib/tes.server.ts`) and try to
+   vouch for `ada@acme` with it. What response do you get, and why is it
+   indistinguishable from a nonexistent member?
+4. The demo's partner backend trusts the `memberId` in the request body.
+   Describe the attack that enables, and sketch the fix.
+5. Refresh-token theft: capture the refresh token from the trace, "steal"
+   it (curl), then let the app refresh first. What happens to your stolen
+   token — and what happens if *you* refresh first? What should the TES do
+   when it detects the second case?
 
 ## Disclaimer
 
-The **client** code follows the RFCs and current best practice
-([OAuth 2.0 Security BCP](https://datatracker.ietf.org/doc/html/rfc9700)).
-The **provider** is a teaching prop: never roll your own authorization server
-for production — use your identity provider's.
+This is a teaching prop. The protocol mechanics (one-time codes, PKCE S256,
+rotation, revocation) follow the RFCs and the
+[OAuth 2.0 Security BCP](https://datatracker.ietf.org/doc/html/rfc9700),
+but never roll your own authorization server for production — use a vetted
+identity platform, and use implementations like this one to *understand*
+what it does for you.

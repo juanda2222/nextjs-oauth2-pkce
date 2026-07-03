@@ -47,7 +47,26 @@ button.primary:hover {
   background: #388e3c;
 }
 
-/* Step-by-step trace boxes used on the home and callback pages */
+button.secondary {
+  font-size: 1.05rem;
+  padding: 0.7rem 1.6rem;
+  border-radius: 8px;
+  border: 1px solid #3a3f4a;
+  background: transparent;
+  color: #e8e8e8;
+  cursor: pointer;
+}
+
+button.secondary:hover {
+  background: #23272f;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+/* Step-by-step trace boxes used by the demo runner */
 .step {
   background: #23272f;
   border: 1px solid #3a3f4a;
