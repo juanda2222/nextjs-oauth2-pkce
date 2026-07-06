@@ -206,7 +206,4 @@ Next.js reserves some file names that can't carry a suffix. For those:
 
 This is a teaching prop. The protocol mechanics (one-time codes, PKCE S256,
 rotation, revocation) follow the RFCs and the
-[OAuth 2.0 Security BCP](https://datatracker.ietf.org/doc/html/rfc9700),
-but never roll your own authorization server for production — use a vetted
-identity platform, and use implementations like this one to *understand*
-what it does for you.
+[OAuth 2.0 Security BCP](https://datatracker.ietf.org/doc/html/rfc9700)
